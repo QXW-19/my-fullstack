@@ -14,16 +14,9 @@ jobs:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
-          host: 101.37.234.235
-          username: root
-          key: |
-            -----BEGIN OPENSSH PRIVATE KEY-----
-            b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
-            QyNTUxOQAAACABwsAyZGPMyuVDuSnuXcnK8MzO9+72dy+abm2XnIRaOwAAAJh45FiteORY
-            rQAAAAtzc2gtZWQyNTUxOQAAACABwsAyZGPMyuVDuSnuXcnK8MzO9+72dy+abm2XnIRaOw
-            AAAED0qz+kPNMMPBdhfJYeY2IUSWDts9ZFW4Pg0YNAl7pQpgHCwDJkY8zK5UO5Ke5dycrw
-            zM737vZ3L5pubZechFo7AAAAD3NlcnZlci1wdXNoLWtleQECAwQFBg==
-            -----END OPENSSH PRIVATE KEY-----
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
             cd /www/wwwroot/my-fullstack
             git fetch --all
