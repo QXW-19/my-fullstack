@@ -1,0 +1,1045 @@
+/**
+ * ============================================================
+ * 猫狗回忆录 - 电子宠物核心引擎 V1
+ * ============================================================
+ *
+ * 功能：
+ * 1. 宠物属性衰减
+ * 2. 经验值
+ * 3. 等级系统
+ * 4. 成长阶段
+ * 5. 性格系统
+ * 6. 性格影响行为效果
+ * 7. 健康状态
+ * 8. 喂食
+ * 9. 玩耍
+ * 10. 清洁
+ * 11. 睡觉
+ * 12. 生病
+ * 13. 死亡
+ * 14. 复活
+ *
+ * ============================================================
+ */
+
+
+/**
+ * ============================================================
+ * 等级经验表
+ * ============================================================
+ *
+ * Lv1 = 0
+ * Lv2 = 100
+ * Lv3 = 250
+ * Lv4 = 500
+ * Lv5 = 800
+ * Lv6 = 1200
+ * Lv7 = 1800
+ * Lv8 = 2500
+ * Lv9 = 3500
+ * Lv10 = 5000
+ */
+const LEVEL_THRESHOLDS = [
+    0,
+    100,
+    250,
+    500,
+    800,
+    1200,
+    1800,
+    2500,
+    3500,
+    5000
+];
+
+
+/**
+ * ============================================================
+ * 宠物性格
+ * ============================================================
+ */
+const PERSONALITIES = {
+
+    /**
+     * 猫
+     */
+    cat: {
+        name: '高冷撒娇',
+
+        description:
+            '平时有点高冷，但被主人照顾时会特别开心。',
+
+        modifiers: {
+
+            feedMood: 5,
+
+            playMood: 0,
+
+            cleanMood: 3,
+
+            sleepMood: 2,
+
+            playExp: 0,
+
+            playEnergyCost: 0
+
+        }
+    },
+
+
+    /**
+     * 狗
+     */
+    dog: {
+        name: '忠诚活泼',
+
+        description:
+            '喜欢陪伴主人，非常喜欢一起玩耍。',
+
+        modifiers: {
+
+            feedMood: 2,
+
+            playMood: 5,
+
+            cleanMood: 2,
+
+            sleepMood: 1,
+
+            playExp: 3,
+
+            playEnergyCost: 0
+
+        }
+    },
+
+
+    /**
+     * 龙
+     */
+    dragon: {
+        name: '骄傲神秘',
+
+        description:
+            '神秘而强大的宠物，成长速度比较快。',
+
+        modifiers: {
+
+            feedMood: 3,
+
+            playMood: 3,
+
+            cleanMood: 1,
+
+            sleepMood: 3,
+
+            playExp: 5,
+
+            playEnergyCost: 2
+
+        }
+    },
+
+
+    /**
+     * 兔子
+     */
+    rabbit: {
+        name: '温顺胆小',
+
+        description:
+            '性格温顺，喜欢安静地陪伴主人。',
+
+        modifiers: {
+
+            feedMood: 3,
+
+            playMood: 2,
+
+            cleanMood: 3,
+
+            sleepMood: 2,
+
+            playExp: 1,
+
+            playEnergyCost: -2
+
+        }
+    },
+
+
+    /**
+     * 熊猫
+     */
+    panda: {
+        name: '慵懒贪吃',
+
+        description:
+            '喜欢吃东西，也非常喜欢睡觉。',
+
+        modifiers: {
+
+            feedMood: 7,
+
+            playMood: -2,
+
+            cleanMood: 1,
+
+            sleepMood: 5,
+
+            playExp: 0,
+
+            playEnergyCost: 1
+
+        }
+    }
+
+};
+
+
+/**
+ * ============================================================
+ * 基础行为效果
+ * ============================================================
+ */
+const BASE_ACTION_EFFECTS = {
+
+    /**
+     * 喂食
+     */
+    feed: {
+
+        hunger: 25,
+
+        mood: 3,
+
+        exp: 5,
+
+        coins: 2
+
+    },
+
+
+    /**
+     * 玩耍
+     */
+    play: {
+
+        mood: 20,
+
+        energy: -5,
+
+        hunger: -3,
+
+        exp: 8,
+
+        coins: 4
+
+    },
+
+
+    /**
+     * 清洁
+     */
+    clean: {
+
+        clean: 30,
+
+        mood: 2,
+
+        exp: 5,
+
+        coins: 2
+
+    },
+
+
+    /**
+     * 睡觉
+     */
+    sleep: {
+
+        energy: 30,
+
+        mood: 5,
+
+        exp: 3,
+
+        coins: 2
+
+    }
+
+};
+
+
+/**
+ * ============================================================
+ * 数值限制
+ * ============================================================
+ */
+function clamp(value, min = 0, max = 100) {
+
+    const number = Number(value);
+
+    if (Number.isNaN(number)) {
+
+        return min;
+
+    }
+
+    return Math.max(
+        min,
+        Math.min(max, number)
+    );
+
+}
+
+
+/**
+ * ============================================================
+ * 根据经验计算等级
+ * ============================================================
+ */
+function getLevelByExp(exp = 0) {
+
+    const currentExp = Math.max(
+        0,
+        Number(exp) || 0
+    );
+
+    let level = 1;
+
+    for (
+        let i = 0;
+        i < LEVEL_THRESHOLDS.length;
+        i++
+    ) {
+
+        if (
+            currentExp >= LEVEL_THRESHOLDS[i]
+        ) {
+
+            level = i + 1;
+
+        }
+
+    }
+
+    return level;
+
+}
+
+
+/**
+ * ============================================================
+ * 获取等级进度
+ * ============================================================
+ */
+function getLevelProgress(exp = 0) {
+
+    const currentExp = Math.max(
+        0,
+        Number(exp) || 0
+    );
+
+    const level =
+        getLevelByExp(currentExp);
+
+
+    /**
+     * 满级
+     */
+    if (
+        level >= LEVEL_THRESHOLDS.length
+    ) {
+
+        return {
+
+            level,
+
+            current: currentExp,
+
+            next: LEVEL_THRESHOLDS[
+                LEVEL_THRESHOLDS.length - 1
+            ],
+
+            percent: 100,
+
+            isMaxLevel: true
+
+        };
+
+    }
+
+    return {
+
+        key: 'danger',
+
+        text: '很需要你',
+
+        emoji: '🥺'
+
+    };
+
+}
+
+
+/**
+ * ============================================================
+ * 判断宠物当前成长阶段
+ * ============================================================
+ */
+function checkStage(pet) {
+
+    /**
+     * 死亡优先
+     */
+    if (
+        pet.stage === 'dead'
+    ) {
+
+        return 'dead';
+
+    }
+
+
+    /**
+     * 健康值
+     */
+    const hunger =
+        clamp(pet.hunger);
+
+    const mood =
+        clamp(pet.mood);
+
+    const clean =
+        clamp(pet.clean);
+
+    const energy =
+        clamp(pet.energy);
+
+
+    /**
+     * 极低属性进入生病状态
+     */
+    if (
+
+        hunger <= 0
+        ||
+        energy <= 0
+        ||
+        (
+            hunger +
+            mood +
+            clean +
+            energy
+        ) / 4 < 15
+
+    ) {
+
+        return 'sick';
+
+    }
+
+
+    /**
+     * 正常成长阶段
+     */
+    return getBaseStage(
+        pet.exp
+    );
+
+}
+
+
+/**
+ * ============================================================
+ * 计算自然衰减
+ * ============================================================
+ *
+ * 每经过一小时：
+ *
+ * 饥饿 -4
+ * 心情 -3
+ * 清洁 -3
+ * 精力 -2
+ */
+function calculateDecay(pet) {
+
+    const now =
+        Date.now();
+
+
+    const lastUpdate =
+        new Date(
+            pet.last_update
+            ||
+            pet.created_at
+            ||
+            now
+        ).getTime();
+
+
+    let elapsed =
+        now - lastUpdate;
+
+
+    if (
+        Number.isNaN(elapsed)
+        ||
+        elapsed < 0
+    ) {
+
+        elapsed = 0;
+
+    }
+
+
+    /**
+     * 每小时计算一次
+     */
+    const hours =
+        Math.floor(
+            elapsed /
+            (1000 * 60 * 60)
+        );
+
+
+    /**
+     * 没经过完整小时
+     */
+    if (hours <= 0) {
+
+        return {
+
+            hunger:
+                clamp(pet.hunger),
+
+            mood:
+                clamp(pet.mood),
+
+            clean:
+                clamp(pet.clean),
+
+            energy:
+                clamp(pet.energy)
+
+        };
+
+    }
+
+
+    return {
+
+        hunger:
+            clamp(
+                pet.hunger - hours * 4
+            ),
+
+        mood:
+            clamp(
+                pet.mood - hours * 3
+            ),
+
+        clean:
+            clamp(
+                pet.clean - hours * 3
+            ),
+
+        energy:
+            clamp(
+                pet.energy - hours * 2
+            )
+
+    };
+
+}
+
+
+/**
+ * ============================================================
+ * 同步宠物
+ * ============================================================
+ */
+function syncPet(pet) {
+
+    const values =
+        calculateDecay(pet);
+
+
+    const exp =
+        Math.max(
+            0,
+            Number(pet.exp) || 0
+        );
+
+
+    const level =
+        getLevelByExp(exp);
+
+
+    const stage =
+        checkStage({
+
+            ...pet,
+
+            ...values,
+
+            exp,
+
+            level
+
+        });
+
+
+    return {
+
+        ...values,
+
+        exp,
+
+        level,
+
+        stage,
+
+        last_update:
+            new Date()
+
+    };
+
+}
+
+
+/**
+ * ============================================================
+ * 获取具体行为效果
+ * ============================================================
+ *
+ * 这里让宠物性格真正影响游戏。
+ */
+function getActionEffect(
+    pet,
+    action
+) {
+
+    const base =
+        BASE_ACTION_EFFECTS[action];
+
+
+    if (!base) {
+
+        throw new Error(
+            '不支持的宠物行为'
+        );
+
+    }
+
+
+    const personality =
+        getPersonality(
+            pet.species
+        );
+
+
+    const modifiers =
+        personality.modifiers
+        || {};
+
+
+    /**
+     * 复制基础效果
+     */
+    const effect = {
+
+        ...base
+
+    };
+
+
+    /**
+     * 喂食
+     */
+    if (
+        action === 'feed'
+    ) {
+
+        effect.mood +=
+            modifiers.feedMood || 0;
+
+    }
+
+
+    /**
+     * 玩耍
+     */
+    if (
+        action === 'play'
+    ) {
+
+        effect.mood +=
+            modifiers.playMood || 0;
+
+
+        effect.exp +=
+            modifiers.playExp || 0;
+
+
+        /**
+         * playEnergyCost：
+         *
+         * 正数 = 额外消耗
+         * 负数 = 少消耗
+         */
+        effect.energy -=
+            modifiers.playEnergyCost || 0;
+
+    }
+
+
+    /**
+     * 清洁
+     */
+    if (
+        action === 'clean'
+    ) {
+
+        effect.mood +=
+            modifiers.cleanMood || 0;
+
+    }
+
+
+    /**
+     * 睡觉
+     */
+    if (
+        action === 'sleep'
+    ) {
+
+        effect.mood +=
+            modifiers.sleepMood || 0;
+
+    }
+
+
+    return effect;
+
+}
+
+
+/**
+ * ============================================================
+ * 执行宠物行为
+ * ============================================================
+ */
+function doAction(
+    pet,
+    action
+) {
+
+    /**
+     * 先同步自然衰减
+     */
+    const current =
+        syncPet(pet);
+
+
+    /**
+     * 获取行为效果
+     */
+    const effect =
+        getActionEffect(
+
+            {
+                ...pet,
+                ...current
+            },
+
+            action
+
+        );
+
+
+    /**
+     * 原等级
+     */
+    const oldLevel =
+        getLevelByExp(
+            Number(pet.exp) || 0
+        );
+
+
+    /**
+     * 新属性
+     */
+    const newValues = {
+
+        hunger:
+            clamp(
+                Number(current.hunger)
+                +
+                (effect.hunger || 0)
+            ),
+
+        mood:
+            clamp(
+                Number(current.mood)
+                +
+                (effect.mood || 0)
+            ),
+
+        clean:
+            clamp(
+                Number(current.clean)
+                +
+                (effect.clean || 0)
+            ),
+
+        energy:
+            clamp(
+                Number(current.energy)
+                +
+                (effect.energy || 0)
+            ),
+
+        exp:
+            Math.max(
+                0,
+                Number(current.exp)
+                +
+                (effect.exp || 0)
+            )
+
+    };
+
+
+    /**
+     * 新等级
+     */
+    const newLevel =
+        getLevelByExp(
+            newValues.exp
+        );
+
+
+    /**
+     * 组合完整宠物状态
+     *
+     * 注意：
+     * 这里把所有属性都传给 checkStage，
+     * 避免以前只传 changed fields
+     * 导致 undefined / NaN 的问题。
+     */
+    const updatedPet = {
+
+        ...pet,
+
+        ...current,
+
+        ...newValues,
+
+        level:
+            newLevel
+
+    };
+
+
+    /**
+     * 新阶段
+     */
+    const newStage =
+        checkStage(
+            updatedPet
+        );
+
+
+    /**
+     * 返回结果
+     */
+    return {
+
+        ...newValues,
+
+        level:
+            newLevel,
+
+        stage:
+            newStage,
+
+        coins:
+            effect.coins || 0,
+
+        effect,
+
+        oldLevel,
+
+        newLevel,
+
+        levelUp:
+            newLevel > oldLevel,
+
+        stageChanged:
+            newStage !== pet.stage
+
+    };
+
+}
+
+
+/**
+ * ============================================================
+ * 导出
+ * ============================================================
+ */
+/**
+ * ============================================================
+ * 兼容旧项目接口
+ * ============================================================
+ *
+ * 原项目中的 petShop.js 仍然使用：
+ *
+ * const { pet } = await engine.syncPet(pet)
+ *
+ * 因此这里保留旧版接口结构，
+ * 同时继续使用 V1 的新成长系统。
+ * ============================================================
+ */
+
+const ACTIONS = {
+
+    feed: {
+        name: '喂食',
+        effect: {
+            hunger: 25,
+            mood: 3
+        },
+        exp: 5,
+        coins: 0
+    },
+
+    play: {
+        name: '玩耍',
+        effect: {
+            mood: 20,
+            energy: -5,
+            hunger: -3
+        },
+        exp: 8,
+        coins: 0
+    },
+
+    clean: {
+        name: '洗澡',
+        effect: {
+            clean: 30,
+            mood: 2
+        },
+        exp: 5,
+        coins: 0
+    },
+
+    sleep: {
+        name: '睡觉',
+        effect: {
+            energy: 30,
+            mood: 5
+        },
+        exp: 3,
+        coins: 0
+    }
+
+};
+
+
+/**
+ * 健康评分
+ */
+function healthScore(pet) {
+
+    return getHealthScore(pet);
+
+}
+
+
+/**
+ * 保留旧版 syncPet 返回结构
+ */
+const syncPetV1 = syncPet;
+
+
+/**
+ * 对外提供兼容版本
+ */
+async function syncPetCompat(pet) {
+
+    const oldLastUpdate =
+        Number(pet.last_update || 0);
+
+    const result =
+        syncPetV1(pet);
+
+    const updatedPet = {
+
+        ...(pet.toJSON
+            ? pet.toJSON()
+            : pet),
+
+        ...result
+
+    };
+
+    const changed =
+        Number(result.last_update || 0)
+        !== oldLastUpdate;
+
+    return {
+
+        pet: updatedPet,
+
+        changed,
+
+        stageChanged:
+            updatedPet.stage !== pet.stage
+
+    };
+
+}
+
+
+module.exports = {
+
+    LEVEL_THRESHOLDS,
+
+    PERSONALITIES,
+
+    BASE_ACTION_EFFECTS,
+
+    ACTIONS,
+
+    clamp,
+
+    getLevelByExp,
+
+    getLevelProgress,
+
+    getBaseStage,
+
+    getPersonality,
+
+    getHealthScore,
+
+    healthScore,
+
+    getMoodStatus,
+
+    checkStage,
+
+    calculateDecay,
+
+    syncPet: syncPetCompat,
+
+    doAction,
+
+    getActionEffect
+
+};

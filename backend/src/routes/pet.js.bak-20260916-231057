@@ -1,0 +1,2090 @@
+const router = require('express').Router();
+const { Op } = require('sequelize');
+
+const {
+    Pet,
+    PetAction,
+    PetCoinLog
+} = require('../models');
+
+const {
+    success,
+    fail
+} = require('../utils/response');
+
+const auth = require('../middlewares/auth');
+const engine = require('../services/petEngine');
+
+// ============================================================
+// 🐱🐶 猫狗回忆录 V1
+// 宠物性格 / 状态 / 成就 / 每日任务
+// ============================================================
+
+const CATDOG_V1_PERSONALITY = {
+  cat: {
+    icon: '🐱',
+    name: '高冷撒娇',
+    desc: '表面高冷，其实非常依赖你。',
+    bonus: '心情恢复稍快'
+  },
+  dog: {
+    icon: '🐶',
+    name: '忠诚活泼',
+    desc: '喜欢陪你玩，是最忠诚的小伙伴。',
+    bonus: '玩耍获得更多经验'
+  },
+  dragon: {
+    icon: '🐉',
+    name: '骄傲神秘',
+    desc: '稀有而神秘，需要更多耐心。',
+    bonus: '成长经验略高'
+  },
+  rabbit: {
+    icon: '🐰',
+    name: '温顺胆小',
+    desc: '性格温顺，需要温柔陪伴。',
+    bonus: '消耗精力较少'
+  },
+  panda: {
+    icon: '🐼',
+    name: '慵懒贪吃',
+    desc: '喜欢吃东西，也喜欢慢悠悠地生活。',
+    bonus: '喂食效果略高'
+  }
+};
+
+const ACHIEVEMENTS = [
+  {
+    id: 'first_companion',
+    icon: '🐾',
+    name: '初次陪伴',
+    desc: '完成第一次互动',
+    type: 'action',
+    target: 1
+  },
+  {
+    id: 'feeding_master',
+    icon: '🍖',
+    name: '喂食达人',
+    desc: '累计喂食 10 次',
+    type: 'feed',
+    target: 10
+  },
+  {
+    id: 'playmate',
+    icon: '🎮',
+    name: '最佳玩伴',
+    desc: '累计玩耍 10 次',
+    type: 'play',
+    target: 10
+  },
+  {
+    id: 'clean_keeper',
+    icon: '🛁',
+    name: '洁癖小管家',
+    desc: '累计洗澡 10 次',
+    type: 'clean',
+    target: 10
+  },
+  {
+    id: 'good_night',
+    icon: '🌙',
+    name: '晚安伙伴',
+    desc: '累计睡觉 10 次',
+    type: 'sleep',
+    target: 10
+  },
+  {
+    id: 'growth',
+    icon: '🌟',
+    name: '成长之路',
+    desc: '达到 5 级',
+    type: 'level',
+    target: 5
+  },
+  {
+    id: 'master',
+    icon: '🏆',
+    name: '宠物大师',
+    desc: '达到 10 级',
+    type: 'level',
+    target: 10
+  },
+  {
+    id: 'rich',
+    icon: '💰',
+    name: '小富翁',
+    desc: '拥有 500 金币',
+    type: 'coins',
+    target: 500
+  }
+];
+
+const DAILY_TASKS = [
+  {
+    id: 'feed_2',
+    icon: '🍖',
+    name: '喂食',
+    type: 'feed',
+    target: 2,
+    reward: 20
+  },
+  {
+    id: 'play_1',
+    icon: '🎮',
+    name: '陪它玩一次',
+    type: 'play',
+    target: 1,
+    reward: 20
+  },
+  {
+    id: 'clean_1',
+    icon: '🛁',
+    name: '帮它洗澡',
+    type: 'clean',
+    target: 1,
+    reward: 20
+  },
+  {
+    id: 'sleep_1',
+    icon: '😴',
+    name: '陪它睡觉',
+    type: 'sleep',
+    target: 1,
+    reward: 20
+  }
+];
+
+function getPersonality(species) {
+  return CATDOG_V1_PERSONALITY[species] || {
+    icon: '🐾',
+    name: '陪伴型',
+    desc: '它喜欢你的陪伴。',
+    bonus: '暂无特殊效果'
+  };
+}
+
+function getHealthScore(pet) {
+  const hunger = Number(pet.hunger || 0);
+  const mood = Number(pet.mood || 0);
+  const clean = Number(pet.clean || 0);
+  const energy = Number(pet.energy || 0);
+
+  return Math.round(
+    hunger * 0.25 +
+    mood * 0.25 +
+    clean * 0.25 +
+    energy * 0.25
+  );
+}
+
+function getMoodStatus(pet) {
+  if (pet.stage === 'dead') {
+    return {
+      icon: '💔',
+      label: '已经离开',
+      text: '它已经离开了，需要复活后才能继续陪伴。'
+    };
+  }
+
+  if (pet.stage === 'sick') {
+    return {
+      icon: '🤒',
+      label: '生病了',
+      text: '它现在身体不舒服，请喂食或帮它洗澡。'
+    };
+  }
+
+  const score = getHealthScore(pet);
+
+  if (score >= 80) {
+    return {
+      icon: '🥰',
+      label: '状态极佳',
+      text: '它现在非常幸福！'
+    };
+  }
+
+  if (score >= 60) {
+    return {
+      icon: '😊',
+      label: '状态不错',
+      text: '它正在健康快乐地成长。'
+    };
+  }
+
+  if (score >= 40) {
+    return {
+      icon: '🙂',
+      label: '需要关注',
+      text: '最近多陪陪它吧。'
+    };
+  }
+
+  return {
+    icon: '🥺',
+    label: '很需要你',
+    text: '它现在非常需要你的照顾。'
+  };
+}
+
+function getLocalDateString() {
+  const now = new Date();
+
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+
+  return `${y}-${m}-${d}`;
+}
+
+async function buildDailyTasks(actions, pet) {
+  const today = getLocalDateString();
+
+  const result = [];
+
+  for (const task of DAILY_TASKS) {
+    const count = actions.filter(a => {
+      if (a.action !== task.type) return false;
+
+      const date = new Date(a.created_at);
+
+      return (
+        date.getFullYear() === new Date().getFullYear() &&
+        date.getMonth() === new Date().getMonth() &&
+        date.getDate() === new Date().getDate()
+      );
+    }).length;
+
+    const reason = `task:${today}:${task.id}`;
+
+    const claimedLog = await PetCoinLog.findOne({
+      where: {
+        pet_id: pet.id,
+        reason
+      }
+    });
+
+    result.push({
+      ...task,
+      progress: Math.min(count, task.target),
+      completed: count >= task.target,
+      claimed: !!claimedLog
+    });
+  }
+
+  return result;
+}
+
+function buildAchievements(pet, actions) {
+  const counts = {};
+
+  for (const action of actions) {
+    counts[action.action] = (counts[action.action] || 0) + 1;
+  }
+
+  const level = Number(pet.level || 1);
+  const coins = Number(pet.coins || 0);
+
+  return ACHIEVEMENTS.map(item => {
+    let current = 0;
+
+    if (item.type === 'action') {
+      current = actions.length;
+    } else if (item.type === 'level') {
+      current = level;
+    } else if (item.type === 'coins') {
+      current = coins;
+    } else {
+      current = counts[item.type] || 0;
+    }
+
+    return {
+      ...item,
+      current,
+      unlocked: current >= item.target
+    };
+  });
+}
+
+
+
+router.use(auth);
+
+
+/**
+ * ============================================================
+ * 物种配置
+ * ============================================================
+ */
+const SPECIES = {
+
+    cat: {
+        name: '猫',
+        emoji: '🐱',
+        speed: 1.0,
+        desc: '高冷但爱你'
+    },
+
+    dog: {
+        name: '狗',
+        emoji: '🐶',
+        speed: 1.1,
+        desc: '忠诚活泼'
+    },
+
+    dragon: {
+        name: '龙',
+        emoji: '🐉',
+        speed: 1.3,
+        desc: '难养但稀有'
+    },
+
+    rabbit: {
+        name: '兔',
+        emoji: '🐰',
+        speed: 0.9,
+        desc: '温顺可爱'
+    },
+
+    panda: {
+        name: '熊猫',
+        emoji: '🐼',
+        speed: 1.2,
+        desc: '国宝级待遇'
+    }
+
+};
+
+
+/**
+ * ============================================================
+ * 性格系统
+ * ============================================================
+ */
+const PERSONALITIES = {
+
+    cat: {
+        name: '高冷撒娇',
+        icon: '😼',
+        desc: '平时有点高冷，开心时会主动撒娇。',
+        bonus: '心情恢复稍快'
+    },
+
+    dog: {
+        name: '忠诚活泼',
+        icon: '🐕',
+        desc: '喜欢陪伴主人，最喜欢玩耍。',
+        bonus: '玩耍获得额外经验'
+    },
+
+    dragon: {
+        name: '骄傲神秘',
+        icon: '🐲',
+        desc: '稀有又有脾气，需要更细心照顾。',
+        bonus: '成长速度较快'
+    },
+
+    rabbit: {
+        name: '温顺胆小',
+        icon: '🐰',
+        desc: '温柔安静，喜欢安静地陪伴主人。',
+        bonus: '玩耍精力消耗较低'
+    },
+
+    panda: {
+        name: '慵懒贪吃',
+        icon: '🐼',
+        desc: '喜欢吃东西，也喜欢懒洋洋地休息。',
+        bonus: '喂食心情收益较高'
+    }
+
+};
+
+
+/**
+ * ============================================================
+ * 成就系统
+ * ============================================================
+ */
+
+
+/**
+ * ============================================================
+ * 每日任务
+ * ============================================================
+ */
+/**
+ * ============================================================
+ * 中国本地日期
+ * ============================================================
+ *
+ * 不使用 toISOString()
+ * 避免北京时间凌晨出现日期偏移。
+ */
+function getLocalDateKey(date = new Date()) {
+
+    const year =
+        date.getFullYear();
+
+    const month =
+        String(date.getMonth() + 1)
+            .padStart(2, '0');
+
+    const day =
+        String(date.getDate())
+            .padStart(2, '0');
+
+    return `${year}-${month}-${day}`;
+
+}
+
+
+/**
+ * ============================================================
+ * 今天开始时间
+ * ============================================================
+ */
+function getTodayStart() {
+
+    const date = new Date();
+
+    date.setHours(
+        0,
+        0,
+        0,
+        0
+    );
+
+    return date;
+
+}
+
+
+/**
+ * ============================================================
+ * 宠物状态
+ * ============================================================
+ */
+function getMoodStatus(
+    pet,
+    healthScore
+) {
+
+    if (
+        pet.stage === 'dead'
+    ) {
+
+        return {
+
+            key: 'dead',
+
+            label: '离开了',
+
+            icon: '💔',
+
+            text:
+                '它需要一次复活机会。'
+
+        };
+
+    }
+
+
+    if (
+        pet.stage === 'sick'
+    ) {
+
+        return {
+
+            key: 'sick',
+
+            label: '生病',
+
+            icon: '🤒',
+
+            text:
+                '现在需要你的照顾。'
+
+        };
+
+    }
+
+
+    if (
+        healthScore >= 85
+    ) {
+
+        return {
+
+            key: 'great',
+
+            label: '状态极佳',
+
+            icon: '🥰',
+
+            text:
+                '今天过得非常开心！'
+
+        };
+
+    }
+
+
+    if (
+        healthScore >= 65
+    ) {
+
+        return {
+
+            key: 'good',
+
+            label: '状态不错',
+
+            icon: '😊',
+
+            text:
+                '它正在舒服地陪着你。'
+
+        };
+
+    }
+
+
+    if (
+        healthScore >= 40
+    ) {
+
+        return {
+
+            key: 'normal',
+
+            label: '需要关注',
+
+            icon: '🙂',
+
+            text:
+                '记得抽时间照顾它。'
+
+        };
+
+    }
+
+
+    return {
+
+        key: 'low',
+
+        label: '很需要你',
+
+        icon: '🥺',
+
+        text:
+            '有几项状态已经偏低了。'
+
+    };
+
+}
+
+
+/**
+ * ============================================================
+ * 构建每日任务
+ * ============================================================
+ */
+function buildDailyTasks(
+    actions,
+    claimedReasons
+) {
+
+    const countMap = {
+
+        feed: 0,
+
+        play: 0,
+
+        clean: 0,
+
+        sleep: 0
+
+    };
+
+
+    actions.forEach(action => {
+
+        if (
+            Object.prototype.hasOwnProperty
+                .call(
+                    countMap,
+                    action.action
+                )
+        ) {
+
+            countMap[action.action]++;
+
+        }
+
+    });
+
+
+    return DAILY_TASKS.map(task => {
+
+        const value =
+            countMap[task.action] || 0;
+
+        const progress =
+            Math.min(
+                value,
+                task.target
+            );
+
+        const completed =
+            value >= task.target;
+
+        const claimed =
+            claimedReasons.has(
+                task.id
+            );
+
+
+        return {
+
+            id: task.id,
+
+            icon: task.icon,
+
+            name: task.name,
+
+            target: task.target,
+
+            value,
+
+            progress,
+
+            reward: task.reward,
+
+            completed,
+
+            claimed
+
+        };
+
+    });
+
+}
+
+
+/**
+ * ============================================================
+ * 生成宠物回忆
+ * ============================================================
+ */
+function buildMemories(
+    pet,
+    recentActions
+) {
+
+    const actionInfo = {
+
+        feed: {
+            icon: '🍖',
+            title: '最近喂食',
+            text: '陪它吃了一顿饭。'
+        },
+
+        play: {
+            icon: '🎮',
+            title: '最近玩耍',
+            text: '和它一起玩了一会儿。'
+        },
+
+        clean: {
+            icon: '🫧',
+            title: '最近洗澡',
+            text: '帮它洗了个舒服的澡。'
+        },
+
+        sleep: {
+            icon: '🌙',
+            title: '最近睡觉',
+            text: '陪它度过了一段安静的休息时间。'
+        }
+
+    };
+
+
+    const memories = [];
+
+
+    /**
+     * 第一次相遇
+     */
+    if (
+        pet.birthday
+    ) {
+
+        memories.push({
+
+            icon: '🐣',
+
+            title: '第一次相遇',
+
+            time: pet.birthday,
+
+            text:
+                `「${pet.name}」来到猫狗回忆录。`
+
+        });
+
+    }
+
+
+    /**
+     * 最近行为
+     */
+    recentActions.forEach(
+        action => {
+
+            const info =
+                actionInfo[action.action];
+
+            if (!info) return;
+
+
+            memories.push({
+
+                icon: info.icon,
+
+                title: info.title,
+
+                time: action.created_at,
+
+                text: info.text
+
+            });
+
+        }
+    );
+
+
+    return memories
+        .slice(0, 8);
+
+}
+
+
+/**
+ * ============================================================
+ * 领养
+ * ============================================================
+ */
+router.post(
+    '/adopt',
+    async (req, res) => {
+
+        try {
+
+            const {
+                name,
+                species
+            } = req.body;
+
+
+            if (
+                !name ||
+                !name.trim()
+            ) {
+
+                return fail(
+                    res,
+                    '请给宠物起个名字'
+                );
+
+            }
+
+
+            if (
+                name.trim().length > 20
+            ) {
+
+                return fail(
+                    res,
+                    '名字太长'
+                );
+
+            }
+
+
+            if (
+                !SPECIES[species]
+            ) {
+
+                return fail(
+                    res,
+                    '请选择物种'
+                );
+
+            }
+
+
+            const exist =
+                await Pet.findOne({
+
+                    where: {
+                        user_id:
+                            req.user.id
+                    }
+
+                });
+
+
+            if (exist) {
+
+                return fail(
+                    res,
+                    '你已经有一只宠物了'
+                );
+
+            }
+
+
+            const pet =
+                await Pet.create({
+
+                    user_id:
+                        req.user.id,
+
+                    name:
+                        name.trim(),
+
+                    species,
+
+                    stage:
+                        'egg',
+
+                    level:
+                        1,
+
+                    exp:
+                        0,
+
+                    coins:
+                        100,
+
+                    hunger:
+                        80,
+
+                    mood:
+                        80,
+
+                    clean:
+                        80,
+
+                    energy:
+                        80,
+
+                    last_update:
+                        Date.now(),
+
+                    birthday:
+                        new Date()
+
+                });
+
+
+            success(
+                res,
+                pet,
+                '领养成功！🐾'
+            );
+
+        } catch (e) {
+
+            fail(
+                res,
+                e.message
+            );
+
+        }
+
+    }
+);
+
+
+/**
+ * ============================================================
+ * 获取宠物
+ * ============================================================
+ */
+router.get(
+    '/',
+    async (req, res) => {
+
+        try {
+
+            const pet =
+                await Pet.findOne({
+
+                    where: {
+                        user_id:
+                            req.user.id
+                    }
+
+                });
+
+
+            if (!pet) {
+
+                return success(
+                    res,
+                    null
+                );
+
+            }
+
+
+            /**
+             * 同步时间衰减
+             */
+            const synced =
+                await engine.syncPet(
+                    pet
+                );
+
+
+            const syncedPet =
+                synced.pet;
+
+
+            const plainPet = {
+
+                ...syncedPet
+
+            };
+
+
+            /**
+             * 等级统一
+             */
+            plainPet.level =
+                engine.getLevelByExp(
+                    plainPet.exp
+                );
+
+
+            /**
+             * 健康分
+             */
+            const healthScore =
+                engine.getHealthScore
+                    ? engine.getHealthScore(
+                        plainPet
+                    )
+                    : Math.round(
+                        (
+                            Number(plainPet.hunger) +
+                            Number(plainPet.mood) +
+                            Number(plainPet.clean) +
+                            Number(plainPet.energy)
+                        ) / 4
+                    );
+
+
+            /**
+             * 今日行为
+             */
+            const todayStart =
+                getTodayStart();
+
+
+            const todayActions =
+                await PetAction.findAll({
+
+                    where: {
+
+                        pet_id:
+                            plainPet.id,
+
+                        created_at: {
+                            [Op.gte]:
+                                todayStart
+                        }
+
+                    },
+
+                    order: [
+                        [
+                            'created_at',
+                            'ASC'
+                        ]
+                    ]
+
+                });
+
+
+            /**
+             * 最近行为
+             */
+            const recentActions =
+                await PetAction.findAll({
+
+                    where: {
+
+                        pet_id:
+                            plainPet.id
+
+                    },
+
+                    order: [
+                        [
+                            'created_at',
+                            'DESC'
+                        ]
+                    ],
+
+                    limit: 8
+
+                });
+
+
+            /**
+             * 今日任务领取记录
+             */
+            const dateKey =
+                getLocalDateKey();
+
+
+            const taskLogs =
+                await PetCoinLog.findAll({
+
+                    where: {
+
+                        pet_id:
+                            plainPet.id,
+
+                        reason: {
+                            [Op.like]:
+                                `task:${dateKey}:%`
+                        }
+
+                    },
+
+                    attributes: [
+                        'reason'
+                    ]
+
+                });
+
+
+            const claimedReasons =
+                new Set();
+
+
+            taskLogs.forEach(log => {
+
+                const parts =
+                    String(
+                        log.reason
+                    ).split(':');
+
+
+                if (
+                    parts.length >= 3
+                ) {
+
+                    claimedReasons.add(
+                        parts.slice(2).join(':')
+                    );
+
+                }
+
+            });
+
+
+            /**
+             * 性格
+             */
+            const personality =
+                PERSONALITIES[
+                    plainPet.species
+                ]
+                ||
+                PERSONALITIES.cat;
+
+
+            /**
+             * 成长进度
+             */
+            const levelProgress =
+                engine.getLevelProgress(
+                    plainPet.exp
+                );
+
+
+            /**
+             * 成就
+             */
+            const achievements =
+                ACHIEVEMENTS.map(
+                    achievement => ({
+
+                        id:
+                            achievement.id,
+
+                        icon:
+                            achievement.icon,
+
+                        name:
+                            achievement.name,
+
+                        desc:
+                            achievement.desc,
+
+                        unlocked:
+                            Boolean(
+                                achievement.test(
+                                    plainPet
+                                )
+                            )
+
+                    })
+                );
+
+
+            /**
+             * 回忆
+             */
+            const memories =
+                buildMemories(
+                    plainPet,
+                    recentActions
+                );
+
+
+            /**
+             * 每日任务
+             */
+            const dailyTasks =
+                buildDailyTasks(
+                    todayActions,
+                    claimedReasons
+                );
+
+
+            success(
+                res,
+                {
+
+                    ...plainPet,
+
+                    speciesInfo:
+                        SPECIES[
+                            plainPet.species
+                        ],
+
+                    personality,
+
+                    healthScore,
+
+                    moodStatus:
+                        getMoodStatus(
+                            plainPet,
+                            healthScore
+                        ),
+
+                    levelProgress,
+
+                    achievements,
+
+                    dailyTasks,
+
+                    memories,
+
+                    elapsedMin:
+                        synced.changed
+                            ? undefined
+                            : 0
+
+                }
+            );
+
+        } catch (e) {
+
+            console.error(
+                'GET /pet error:',
+                e
+            );
+
+            fail(
+                res,
+                e.message
+            );
+
+        }
+
+    }
+);
+
+
+/**
+ * ============================================================
+ * 执行宠物行为
+ * ============================================================
+ */
+router.post(
+    '/action',
+    async (req, res) => {
+
+        try {
+
+            const {
+                action
+            } = req.body;
+
+
+            if (
+                ![
+                    'feed',
+                    'play',
+                    'clean',
+                    'sleep'
+                ].includes(action)
+            ) {
+
+                return fail(
+                    res,
+                    '未知行为'
+                );
+
+            }
+
+
+            const pet =
+                await Pet.findOne({
+
+                    where: {
+                        user_id:
+                            req.user.id
+                    }
+
+                });
+
+
+            if (!pet) {
+
+                return fail(
+                    res,
+                    '你还没有宠物'
+                );
+
+            }
+
+
+            /**
+             * 引擎执行
+             */
+            const result =
+                await engine.doAction(
+                    pet,
+                    action
+                );
+
+
+            /**
+             * 记录行为
+             */
+            await PetAction.create({
+
+                pet_id:
+                    pet.id,
+
+                action,
+
+                effect:
+                    result.effect
+                    ||
+                    engine.ACTIONS[action].effect,
+
+                coins_cost:
+                    0
+
+            });
+
+
+            /**
+             * 返回最新宠物
+             */
+            const latestPet =
+                await Pet.findByPk(
+                    pet.id
+                );
+
+
+            const plain =
+                latestPet.toJSON();
+
+
+            const score =
+                engine.getHealthScore
+                    ? engine.getHealthScore(
+                        plain
+                    )
+                    : Math.round(
+                        (
+                            Number(plain.hunger) +
+                            Number(plain.mood) +
+                            Number(plain.clean) +
+                            Number(plain.energy)
+                        ) / 4
+                    );
+
+
+            success(
+                res,
+                {
+
+                    ...result,
+
+                    pet:
+                        plain,
+
+                    healthScore:
+                        score,
+
+                    moodStatus:
+                        getMoodStatus(
+                            plain,
+                            score
+                        ),
+
+                    level:
+                        Number(plain.level),
+
+                    levelUp:
+                        Boolean(
+                            result.levelUp
+                        ),
+
+                    stageChanged:
+                        Boolean(
+                            result.stageChanged
+                        )
+
+                },
+                `${result.action}成功！`
+            );
+
+        } catch (e) {
+
+            fail(
+                res,
+                e.message
+            );
+
+        }
+
+    }
+);
+
+
+/**
+ * ============================================================
+ * 每日任务领取
+ * ============================================================
+ */
+router.post(
+    '/daily-task/claim',
+    async (req, res) => {
+
+        try {
+
+            const {
+                taskId
+            } = req.body;
+
+
+            const task =
+                DAILY_TASKS.find(
+                    item =>
+                        item.id === taskId
+                );
+
+
+            if (!task) {
+
+                return fail(
+                    res,
+                    '任务不存在'
+                );
+
+            }
+
+
+            const pet =
+                await Pet.findOne({
+
+                    where: {
+                        user_id:
+                            req.user.id
+                    }
+
+                });
+
+
+            if (!pet) {
+
+                return fail(
+                    res,
+                    '你还没有宠物'
+                );
+
+            }
+
+
+            const todayStart =
+                getTodayStart();
+
+
+            const actionCount =
+                await PetAction.count({
+
+                    where: {
+
+                        pet_id:
+                            pet.id,
+
+                        action:
+                            task.action,
+
+                        created_at: {
+                            [Op.gte]:
+                                todayStart
+                        }
+
+                    }
+
+                });
+
+
+            if (
+                actionCount <
+                task.target
+            ) {
+
+                return fail(
+                    res,
+                    '任务还没有完成'
+                );
+
+            }
+
+
+            const dateKey =
+                getLocalDateKey();
+
+
+            const reason =
+                `task:${dateKey}:${task.id}`;
+
+
+            /**
+             * 防止重复领取
+             */
+            const existing =
+                await PetCoinLog.findOne({
+
+                    where: {
+
+                        pet_id:
+                            pet.id,
+
+                        reason
+
+                    }
+
+                });
+
+
+            if (existing) {
+
+                return fail(
+                    res,
+                    '今天已经领取过这个奖励了'
+                );
+
+            }
+
+
+            const newCoins =
+                Number(pet.coins || 0)
+                +
+                Number(task.reward);
+
+
+            await pet.update({
+
+                coins:
+                    newCoins
+
+            });
+
+
+            await PetCoinLog.create({
+
+                pet_id:
+                    pet.id,
+
+                amount:
+                    task.reward,
+
+                reason,
+
+                balance:
+                    newCoins
+
+            });
+
+
+            success(
+                res,
+                {
+
+                    taskId,
+
+                    reward:
+                        task.reward,
+
+                    coins:
+                        newCoins
+
+                },
+                `领取成功！+${task.reward} 金币`
+            );
+
+        } catch (e) {
+
+            fail(
+                res,
+                e.message
+            );
+
+        }
+
+    }
+);
+
+
+/**
+ * ============================================================
+ * 行为历史
+ * ============================================================
+ */
+router.get(
+    '/actions',
+    async (req, res) => {
+
+        try {
+
+            const pet =
+                await Pet.findOne({
+
+                    where: {
+                        user_id:
+                            req.user.id
+                    }
+
+                });
+
+
+            if (!pet) {
+
+                return fail(
+                    res,
+                    '你还没有宠物'
+                );
+
+            }
+
+
+            const actions =
+                await PetAction.findAll({
+
+                    where: {
+                        pet_id:
+                            pet.id
+                    },
+
+                    order: [
+                        [
+                            'created_at',
+                            'DESC'
+                        ]
+                    ],
+
+                    limit: 30
+
+                });
+
+
+            success(
+                res,
+                actions
+            );
+
+        } catch (e) {
+
+            fail(
+                res,
+                e.message
+            );
+
+        }
+
+    }
+);
+
+
+/**
+ * ============================================================
+ * 改名
+ * ============================================================
+ */
+router.post(
+    '/rename',
+    async (req, res) => {
+
+        try {
+
+            const {
+                name
+            } = req.body;
+
+
+            if (
+                !name ||
+                !name.trim()
+            ) {
+
+                return fail(
+                    res,
+                    '名字不能为空'
+                );
+
+            }
+
+
+            if (
+                name.trim().length > 20
+            ) {
+
+                return fail(
+                    res,
+                    '名字太长'
+                );
+
+            }
+
+
+            const pet =
+                await Pet.findOne({
+
+                    where: {
+                        user_id:
+                            req.user.id
+                    }
+
+                });
+
+
+            if (!pet) {
+
+                return fail(
+                    res,
+                    '你还没有宠物'
+                );
+
+            }
+
+
+            await pet.update({
+
+                name:
+                    name.trim()
+
+            });
+
+
+            success(
+                res,
+                null,
+                '改名成功'
+            );
+
+        } catch (e) {
+
+            fail(
+                res,
+                e.message
+            );
+
+        }
+
+    }
+);
+
+
+/**
+ * ============================================================
+ * 复活
+ * ============================================================
+ */
+router.post(
+    '/revive',
+    async (req, res) => {
+
+        try {
+
+            const pet =
+                await Pet.findOne({
+
+                    where: {
+                        user_id:
+                            req.user.id
+                    }
+
+                });
+
+
+            if (!pet) {
+
+                return fail(
+                    res,
+                    '你还没有宠物'
+                );
+
+            }
+
+
+            if (
+                pet.stage !== 'dead'
+            ) {
+
+                return fail(
+                    res,
+                    '宠物还活着'
+                );
+
+            }
+
+
+            const COST = 500;
+
+
+            if (
+                Number(pet.coins) <
+                COST
+            ) {
+
+                return fail(
+                    res,
+                    `需要 ${COST} 金币，你只有 ${pet.coins}`
+                );
+
+            }
+
+
+            const newStage =
+                engine.getBaseStage
+                    ? engine.getBaseStage(
+                        pet.exp
+                    )
+                    : (
+                        Number(pet.exp) >= 500
+                            ? 'adult'
+                            : 'baby'
+                    );
+
+
+            await pet.update({
+
+                stage:
+                    newStage,
+
+                level:
+                    engine.getLevelByExp
+                        ? engine.getLevelByExp(
+                            pet.exp
+                        )
+                        : pet.level,
+
+                coins:
+                    Number(pet.coins)
+                    -
+                    COST,
+
+                hunger:
+                    60,
+
+                mood:
+                    60,
+
+                clean:
+                    60,
+
+                energy:
+                    60,
+
+                last_update:
+                    Date.now()
+
+            });
+
+
+            await PetCoinLog.create({
+
+                pet_id:
+                    pet.id,
+
+                amount:
+                    -COST,
+
+                reason:
+                    'revive',
+
+                balance:
+                    Number(pet.coins) -
+                    COST
+
+            });
+
+
+            success(
+                res,
+                {
+
+                    coins:
+                        Number(pet.coins) -
+                        COST,
+
+                    stage:
+                        newStage
+
+                },
+                '宠物复活了！🎉'
+            );
+
+        } catch (e) {
+
+            fail(
+                res,
+                e.message
+            );
+
+        }
+
+    }
+);
+
+
+module.exports = router;
+
+
+// ============================================================
+// 🐱🐶 V1 宠物增强信息
+// ============================================================
+
+router.get('/pet/v1-info', async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const pet = await Pet.findOne({
+      where: { user_id: userId }
+    });
+
+    if (!pet) {
+      return res.status(404).json({
+        message: '还没有宠物'
+      });
+    }
+
+    const actions = await PetAction.findAll({
+      where: { pet_id: pet.id },
+      order: [['created_at', 'DESC']],
+      limit: 200
+    });
+
+    const personality = getPersonality(pet.species);
+    const moodStatus = getMoodStatus(pet);
+    const healthScore = getHealthScore(pet);
+
+    const achievements = buildAchievements(
+      pet,
+      actions
+    );
+
+    const dailyTasks = await buildDailyTasks(
+      actions,
+      pet
+    );
+
+    const memories = [];
+
+    const latestByAction = {};
+
+    for (const action of actions) {
+      if (!latestByAction[action.action]) {
+        latestByAction[action.action] = action;
+      }
+    }
+
+    const memoryConfig = {
+      feed: {
+        icon: '🍖',
+        title: '最近喂食',
+        text: '给它准备了一顿好吃的。'
+      },
+      play: {
+        icon: '🎮',
+        title: '最近玩耍',
+        text: '陪它度过了一段快乐的时间。'
+      },
+      clean: {
+        icon: '🛁',
+        title: '最近洗澡',
+        text: '帮它洗了一个舒服的澡。'
+      },
+      sleep: {
+        icon: '🌙',
+        title: '最近睡觉',
+        text: '陪它度过了一段安静的休息时间。'
+      }
+    };
+
+    for (const type of ['feed', 'play', 'clean', 'sleep']) {
+      const action = latestByAction[type];
+
+      if (action) {
+        memories.push({
+          icon: memoryConfig[type].icon,
+          title: memoryConfig[type].title,
+          text: memoryConfig[type].text,
+          time: action.created_at
+        });
+      }
+    }
+
+    res.json({
+      personality,
+      moodStatus,
+      healthScore,
+      achievements,
+      dailyTasks,
+      memories
+    });
+
+  } catch (error) {
+    console.error('获取宠物 V1 信息失败:', error);
+
+    res.status(500).json({
+      message: '获取宠物信息失败'
+    });
+  }
+});
+
+
+// ============================================================
+// 🎁 每日任务领奖
+// ============================================================
+
+router.post('/pet/daily-task/claim', async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { taskId } = req.body;
+
+    const task = DAILY_TASKS.find(
+      item => item.id === taskId
+    );
+
+    if (!task) {
+      return res.status(400).json({
+        message: '任务不存在'
+      });
+    }
+
+    const pet = await Pet.findOne({
+      where: { user_id: userId }
+    });
+
+    if (!pet) {
+      return res.status(404).json({
+        message: '还没有宠物'
+      });
+    }
+
+    const actions = await PetAction.findAll({
+      where: { pet_id: pet.id }
+    });
+
+    const today = getLocalDateString();
+
+    const todayCount = actions.filter(action => {
+      if (action.action !== task.type) {
+        return false;
+      }
+
+      const date = new Date(action.created_at);
+      const now = new Date();
+
+      return (
+        date.getFullYear() === now.getFullYear() &&
+        date.getMonth() === now.getMonth() &&
+        date.getDate() === now.getDate()
+      );
+    }).length;
+
+    if (todayCount < task.target) {
+      return res.status(400).json({
+        message: `任务还没有完成，需要 ${task.target} 次`
+      });
+    }
+
+    const reason = `task:${today}:${task.id}`;
+
+    const exists = await PetCoinLog.findOne({
+      where: {
+        pet_id: pet.id,
+        reason
+      }
+    });
+
+    if (exists) {
+      return res.status(400).json({
+        message: '今天已经领取过了'
+      });
+    }
+
+    pet.coins = Number(pet.coins || 0) + task.reward;
+
+    await pet.save();
+
+    await PetCoinLog.create({
+      pet_id: pet.id,
+      amount: task.reward,
+      reason
+    });
+
+    res.json({
+      message: '领取成功',
+      reward: task.reward,
+      coins: pet.coins
+    });
+
+  } catch (error) {
+    console.error('领取每日任务失败:', error);
+
+    res.status(500).json({
+      message: '领取失败'
+    });
+  }
+});
+

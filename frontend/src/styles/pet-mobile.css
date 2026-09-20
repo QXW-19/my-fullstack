@@ -1,0 +1,178 @@
+/* ==========================================
+   🎨 宠物主页 - PC + 手机端优化样式
+   ========================================== */
+
+/* ========== 通用：动态列表滚动 ========== */
+.history-scroll {
+  max-height: 240px;
+  overflow-y: auto;
+  padding-right: 4px;
+  margin-top: 8px;
+}
+.history-scroll::-webkit-scrollbar { width: 4px; }
+.history-scroll::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 2px;
+}
+.history-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.2);
+}
+
+/* ========== 快捷按钮：紧凑排列 ========== */
+.pet-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* ========== 手机端 ========== */
+@media (max-width: 640px) {
+
+  /* 顶部导航精简 */
+  .nav-inner {
+    padding: 10px 14px !important;
+  }
+  .brand-text,
+  .nav-brand h2 {
+    font-size: 15px !important;
+  }
+  .user-name {
+    display: none !important;
+  }
+  .nav-actions .icon-btn {
+    padding: 4px 6px !important;
+  }
+
+  /* 主体容器 */
+  .main {
+    padding: 14px 12px 60px !important;
+  }
+
+  /* 宠物展示区 */
+  .pet-stage {
+    padding: 20px 12px 12px !important;
+    margin-bottom: 16px !important;
+  }
+  .pet-stage::before {
+    width: 180px !important;
+    height: 180px !important;
+  }
+  .pet-display {
+    height: 160px !important;
+  }
+  .pet-emoji {
+    font-size: 120px !important;
+  }
+  .pet-name {
+    font-size: 22px !important;
+    margin-bottom: 8px !important;
+  }
+  .pet-meta {
+    flex-wrap: wrap !important;
+    gap: 6px !important;
+    justify-content: center !important;
+  }
+  .stage-tag, .level-tag, .coins-tag {
+    font-size: 11px !important;
+    padding: 4px 10px !important;
+  }
+  .rename-btn {
+    padding: 4px 8px !important;
+    font-size: 13px !important;
+  }
+
+  /* 快捷按钮 6 个 → 3 列 2 行 */
+  .pet-buttons {
+    display: grid !important;
+    grid-template-columns: repeat(3, 1fr) !important;
+    gap: 8px !important;
+    margin-top: 12px !important;
+    padding: 0 4px !important;
+  }
+  .mini-btn {
+    padding: 8px 6px !important;
+    font-size: 12px !important;
+    width: 100% !important;
+    text-align: center !important;
+  }
+
+  /* 属性卡紧凑 */
+  .stats-card {
+    padding: 14px !important;
+    border-radius: 14px !important;
+    margin-bottom: 12px !important;
+  }
+  .stat-row {
+    gap: 8px !important;
+    padding: 6px 0 !important;
+  }
+  .stat-icon { font-size: 18px !important; width: 22px !important; }
+  .stat-label { font-size: 12px !important; width: 40px !important; }
+  .stat-bar { height: 8px !important; }
+  .stat-value { font-size: 13px !important; width: 32px !important; }
+
+  /* 通用卡片 */
+  .growth-card,
+  .daily-card,
+  .memory-card,
+  .achievement-card,
+  .history-card {
+    padding: 14px !important;
+    border-radius: 14px !important;
+    margin-bottom: 10px !important;
+  }
+  .growth-card h3,
+  .daily-card h3,
+  .memory-card h3,
+  .achievement-card h3,
+  .history-card h3 {
+    font-size: 13px !important;
+    margin-bottom: 8px !important;
+  }
+
+  /* 操作按钮 4 个 → 2x2 */
+  .actions-grid {
+    grid-template-columns: repeat(2, 1fr) !important;
+    gap: 10px !important;
+    margin-bottom: 16px !important;
+  }
+  .action-btn {
+    padding: 16px 8px !important;
+    font-size: 13px !important;
+    border-radius: 14px !important;
+  }
+  .action-icon {
+    font-size: 24px !important;
+  }
+
+  /* ⭐ 动态列表：限制高度 */
+  .history-scroll {
+    max-height: 180px !important;
+  }
+  .history-item {
+    padding: 8px 0 !important;
+    font-size: 13px !important;
+  }
+
+  /* 死亡横幅 */
+  .death-banner {
+    padding: 12px 16px !important;
+    gap: 10px !important;
+    border-radius: 12px !important;
+  }
+  .banner-icon { font-size: 26px !important; }
+  .banner-text { font-size: 13px !important; }
+}
+
+/* 超小屏（<400px） */
+@media (max-width: 400px) {
+  .pet-emoji { font-size: 100px !important; }
+  .pet-display { height: 140px !important; }
+  .pet-name { font-size: 20px !important; }
+  .actions-grid { gap: 8px !important; }
+  .action-btn { padding: 12px 6px !important; font-size: 12px !important; }
+  .action-icon { font-size: 20px !important; }
+  .history-scroll { max-height: 150px !important; }
+}
