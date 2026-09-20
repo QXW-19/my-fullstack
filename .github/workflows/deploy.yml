@@ -18,16 +18,17 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
+            # ========== 1. 拉取最新代码 ==========
             cd /www/wwwroot/my-fullstack
             git fetch --all
             git reset --hard origin/main
             
-            # 前端构建
+            # ========== 2. 构建前端 ==========
             cd /www/wwwroot/my-fullstack/frontend
             npm install
             npm run build
             
-            # 后端部署（暂时保持注释，前端跑通后再打开）
-            # cd /www/wwwroot/my-fullstack/backend
-            # npm install
-            # pm2 restart all
+            # ========== 3. 重启后端 ==========
+            cd /www/wwwroot/my-fullstack/backend
+            npm install
+            pm2 restart all
