@@ -38,7 +38,7 @@ const server = http.createServer(app);
 initSocket(server);
 
 // 同步数据库 + 启动
-sequelize.sync({ alter: true })
+sequelize.sync()
   .then(() => {
     console.log('✅ 数据库表同步完成');
     server.listen(PORT, () => {
