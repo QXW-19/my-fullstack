@@ -1,12 +1,19 @@
 const Pet = require('../models/pet');
 
 // 属性衰减速率（每分钟）
+// ⭐ V1.1 修复：原速率（hunger 0.8/分等）导致满值宠物约 2.2 小时即死、
+// 离线回归必死。现放缓约 8 倍，满值约 16 小时才进入危险区。
 const DECAY_RATES = {
-  hunger: 0.8,
-  mood: 0.6,
-  clean: 0.5,
-  energy: 0.4
+  hunger: 0.1,
+  mood: 0.08,
+  clean: 0.06,
+  energy: 0.05
 };
+
+// ⭐ V1.1 离线保护：离线超过该时长后，四项数值保底不低于 OFFLINE_FLOOR，
+// 最坏只进入"病危"等待主人回归救治，绝不回归即判死
+const OFFLINE_PROTECT_MIN = 6 * 60;
+const OFFLINE_FLOOR = 12;
 
 const THRESHOLDS = {
   LOW: 30,
@@ -77,6 +84,15 @@ function applyDecay(pet) {
   result.clean = +result.clean.toFixed(2);
   result.energy = +result.energy.toFixed(2);
 
+  // ⭐ V1.1 离线保护：离线超过 6 小时，四项数值保底 12，
+  // 回归时最坏进入"病危"可救治状态，绝不回归即判死
+  if (elapsedMin >= OFFLINE_PROTECT_MIN) {
+    result.hunger = Math.max(result.hunger, OFFLINE_FLOOR);
+    result.mood = Math.max(result.mood, OFFLINE_FLOOR);
+    result.clean = Math.max(result.clean, OFFLINE_FLOOR);
+    result.energy = Math.max(result.energy, OFFLINE_FLOOR);
+  }
+
   return result;
 }
 
@@ -85,17 +101,21 @@ function applyDecay(pet) {
  */
 function checkStage(pet, values) {
   const avg = (values.hunger + values.mood + values.clean + values.energy) / 4;
+  // ⭐ V1.1：任一单项数值过低也进入生病，避免"单项饿到见底却显示健康"
+  const minStat = Math.min(values.hunger, values.mood, values.clean, values.energy);
 
   // 死亡：平均 < 5
   if (avg < 5 && pet.stage !== 'egg') return 'dead';
 
-  // 生病：平均 < 15
-  if (avg < THRESHOLDS.DANGER && pet.stage !== 'egg' && pet.stage !== 'dead') {
-    return 'sick';
+  // 生病：平均 < 15 或 任一单项 < 15
+  if (pet.stage !== 'egg' && pet.stage !== 'dead') {
+    if (avg < THRESHOLDS.DANGER || minStat < THRESHOLDS.DANGER) {
+      return 'sick';
+    }
   }
 
-  // 康复
-  if (pet.stage === 'sick' && avg >= THRESHOLDS.RECOVER) {
+  // 康复：均值与最低值都达标（防止单项仍过低时状态来回闪烁）
+  if (pet.stage === 'sick' && avg >= THRESHOLDS.RECOVER && minStat >= THRESHOLDS.DANGER) {
     return pet.level >= 5 ? 'adult' : 'baby';
   }
 
@@ -195,15 +215,18 @@ async function doAction(pet, actionKey) {
   const currentPet = synced.pet;
 
   if (currentPet.stage === 'dead') throw new Error('宠物已经离开了...');
-  if (currentPet.stage === 'sick') throw new Error('宠物生病了，请先治疗');
+  // ⭐ V1.1 修复：生病时允许照顾行为（喂食/玩耍/洗澡/睡觉即治疗），效果减半。
+  // 旧版生病时拒绝一切操作却没有治疗接口，等于判死刑。
+  const sick = currentPet.stage === 'sick';
 
   const newValues = {};
   for (const [key, delta] of Object.entries(action.effect)) {
     const current = +currentPet[key];
-    newValues[key] = Math.max(0, Math.min(100, current + delta));
+    const applied = sick ? delta / 2 : delta;
+    newValues[key] = Math.max(0, Math.min(100, current + applied));
   }
 
-  const expGain = action.exp;
+  const expGain = sick ? Math.ceil(action.exp / 2) : action.exp;
   const newExp = currentPet.exp + expGain;
   const statsKey = `total_${actionKey}`;
 
